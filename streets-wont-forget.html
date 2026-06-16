@@ -149,6 +149,10 @@
     text-transform:uppercase; background:rgba(232,200,74,0.15); color:var(--gold);
     border-radius:4px; padding:2px 7px; margin-bottom:6px; }
   .manager-desc { font-size:16px; color:rgba(255,255,255,0.65); line-height:1.5; }
+  .manager-status { font-size:13px; font-weight:700; margin-top:8px; display:flex; align-items:center; gap:6px; text-transform:uppercase; letter-spacing:0.5px; }
+  .manager-status.is-active { color:#22c55e; }
+  .manager-status.is-inactive { color:rgba(255,255,255,0.4); }
+  .manager-status-dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex-shrink:0; }
 
   .formation-screen { padding: 10px 16px 16px; max-width: 520px; margin: 0 auto; display: none;
     height: calc(100vh - 56px); overflow-y: auto; }
@@ -716,7 +720,7 @@
 <!-- Build-up screen -->
 <div class="buildup-screen" id="buildupScreen">
   <div class="buildup-inner">
-    <div class="phase-eyebrow">Step 2 of 2. Tactics</div>
+    <div class="phase-eyebrow" id="buildupEyebrow">Step 2 of 2. Tactics</div>
     <div class="phase-title">Choose your <span>Build-up Play</span></div>
     <div class="phase-desc">How does your team move the ball?</div>
     <div class="buildup-options">
@@ -743,16 +747,51 @@
     <div class="phase-eyebrow" style="font-size:10px">The Barclays Premier League Invitational</div>
     <div class="phase-title" id="finalTeamName">Your <span>Team</span></div>
   </div>
+  <div class="manager-card selected" id="finalManagerCard" style="margin:4px 16px 0;cursor:default">
+    <div class="manager-name" id="finalManagerName">No Manager</div>
+    <div class="manager-desc" id="finalManagerDesc">No effect.</div>
+    <div class="manager-status" id="finalManagerStatus"></div>
+  </div>
   <div class="final-pitch-wrap">
     <div class="final-pitch" id="finalPitch"></div>
   </div>
   <div class="team-summary" id="teamSummary"></div>
 </div>
 
+<!-- Squad Report screen (shown before each round's match) -->
+<div class="prematch-screen" id="squadReportScreen">
+  <div class="prematch-kickoff-btn" style="display:flex;gap:8px">
+    <button class="play-btn" style="width:100%;margin:0;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.25)" onclick="openStyleChangeFromReport()">Change Play Style</button>
+    <button class="play-btn" style="width:100%;margin:0" onclick="proceedFromSquadReport()">Play Next Match →</button>
+  </div>
+  <div class="prematch-inner">
+    <div class="prematch-eyebrow" id="squadReportEyebrow">Round 1</div>
+    <div class="prematch-vs"><span id="squadReportTeamName"></span></div>
+    <div class="manager-card selected" style="margin:10px 0 4px;cursor:default">
+      <div class="manager-name" id="squadReportManagerName">No Manager</div>
+      <div class="manager-desc" id="squadReportManagerDesc">No effect.</div>
+      <div class="manager-status" id="squadReportManagerStatus"></div>
+    </div>
+    <div class="prematch-lineup-label">Your Lineup</div>
+    <div class="prematch-stat-strip" id="squadReportStatStrip">
+      <div class="prematch-stat"><div class="prematch-stat-val" id="squadReportOvr">, </div><div class="prematch-stat-lbl">Avg OVR</div></div>
+      <div class="prematch-stat"><div class="prematch-stat-val" id="squadReportFormation">, </div><div class="prematch-stat-lbl">Formation</div></div>
+      <div class="prematch-stat"><div class="prematch-stat-val" id="squadReportStyleDisplay">, </div><div class="prematch-stat-lbl">Style</div></div>
+    </div>
+    <div class="prematch-pitch-wrap">
+      <div class="prematch-pitch" id="squadReportPitch"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Pre-match screen -->
 <div class="prematch-screen" id="prematchScreen">
-  <div class="prematch-kickoff-btn">
-    <button class="play-btn" style="width:100%;margin:0" onclick="kickOff()">⚽ Kick Off</button>
+
+  <div class="prematch-kickoff-btn" style="display:flex;flex-direction:column;gap:8px">
+    <button class="play-btn" style="width:100%;margin:0" onclick="kickOff()">⚽ Watch Match</button>
+    <div style="font-size:11px;color:rgba(255,255,255,0.4);text-align:center;margin:-4px 0 0">Witness the live action unfold</div>
+    <button class="play-btn" style="width:100%;margin:0;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.25)" onclick="simulateInstant()">⏩ Simulate Result</button>
+    <div style="font-size:11px;color:rgba(255,255,255,0.4);text-align:center;margin:-4px 0 0">Skip straight to the results</div>
   </div>
   <div class="prematch-inner">
     <div class="prematch-eyebrow" id="prematchEyebrow">Round 1</div>
@@ -1971,6 +2010,7 @@ function updatePitchSlot(idx,player){
 function showFinalScreen(){
   if(!chosenBuildup){
     document.getElementById('draftArea').style.display='none';
+    document.getElementById('buildupEyebrow').textContent='Step 2 of 2. Tactics';
     document.getElementById('buildupScreen').classList.add('visible');
     return;
   }
@@ -1983,11 +2023,62 @@ function showFinalScreen(){
   document.getElementById('finalScreen').classList.add('visible');
 }
 
+let _returningToSquadReport = false;
 function selectBuildup(style){
   chosenBuildup=style;
   document.getElementById('buildupScreen').classList.remove('visible');
+  if(_returningToSquadReport){
+    _returningToSquadReport = false;
+    showSquadReport();
+    return;
+  }
   renderFinalScreen();
   document.getElementById('finalScreen').classList.add('visible');
+}
+
+// Computes whether the chosen manager's effect is currently active given the drafted
+// squad, plus an estimated OVR delta to show alongside the Overall stat.
+function getManagerStatus(){
+  if(!chosenManager) return null;
+  const mgr = chosenManager;
+  const hasNat = nat => squadSlots.some(s=>s.player && s.player.Nationality===nat);
+  const hasClub = club => squadSlots.some(s=>s.player && s.player.Club===club);
+  const allEnglish = squadSlots.every(s=>!s.player || s.player.Nationality==='England');
+  const anyEnglish = squadSlots.some(s=>s.player && s.player.Nationality==='England');
+  const defCount = squadSlots.filter(s=>s.pos==='DEF').length;
+
+  switch(mgr.apply){
+    case 'french_boost':
+      return {active: hasNat('France'), delta: hasNat('France') ? 1 : 0};
+    case 'spanish_boost':
+      return {active: hasNat('Spain'), delta: hasNat('Spain') ? 1 : 0};
+    case 'houllier_boost':
+      return {active: hasClub('Aston Villa')||hasClub('Liverpool'), delta: (hasClub('Aston Villa')||hasClub('Liverpool')) ? 1 : 0};
+    case 'hodgson_mix': {
+      const boosted = hasClub('West Bromwich Albion')||hasClub('Fulham');
+      const hurt = hasClub('Liverpool');
+      return {active: boosted||hurt, delta: (boosted?1:0) - (hurt?1:0)};
+    }
+    case 'pas_boost': case 'sho_boost': case 'hea_boost':
+      return {active: true, delta: 1};
+    case 'def_boost':
+      return {active: defCount>0, delta: defCount>0 ? 1 : 0};
+    case 'stat_malus':
+      return {active: true, delta: -1};
+    case 'foreign_boost':
+      return {active: !anyEnglish, delta: !anyEnglish ? 1 : 0};
+    case 'english_boost':
+      return {active: allEnglish, delta: allEnglish ? 1 : 0};
+    case 'wolves_free':
+      return {active: hasClub('Wolverhampton Wanderers'), delta: 0};
+    case 'mufc_discount':
+      return {active: hasClub('Manchester United'), delta: 0};
+    case 'chaos_rng': case 'skip_pass': case 'et_boost':
+    case 'defoe': case 'budget_boost':
+      return {active: true, delta: 0};
+    default:
+      return {active: false, delta: 0};
+  }
 }
 
 function renderFinalScreen(){
@@ -2017,8 +2108,35 @@ function renderFinalScreen(){
   const avgOvr=Math.round(squadSlots.reduce((a,s)=>a+(s.player.OVR||0),0)/squadSlots.length);
   const startBudget = chosenDifficulty ? chosenDifficulty.budget : BUDGET;
   const spent = startBudget - budget;
+
+  // Manager card
+  if(chosenManager){
+    document.getElementById('finalManagerName').textContent = chosenManager.name;
+    document.getElementById('finalManagerDesc').textContent = chosenManager.desc;
+  } else {
+    document.getElementById('finalManagerName').textContent = 'No Manager';
+    document.getElementById('finalManagerDesc').textContent = 'No effect.';
+  }
+  const mgrStatus = getManagerStatus();
+  const statusEl = document.getElementById('finalManagerStatus');
+  if(mgrStatus){
+    statusEl.className = 'manager-status ' + (mgrStatus.active ? 'is-active' : 'is-inactive');
+    statusEl.innerHTML = `<span class="manager-status-dot"></span>${mgrStatus.active ? 'Active' : 'Inactive'}`;
+  } else {
+    statusEl.className = 'manager-status is-inactive';
+    statusEl.innerHTML = `<span class="manager-status-dot"></span>Inactive`;
+  }
+
+  // Avg OVR with manager impact indicator
+  let ovrIndicator = '';
+  if(mgrStatus && mgrStatus.active && mgrStatus.delta!==0){
+    const sign = mgrStatus.delta>0 ? '+' : '';
+    const colour = mgrStatus.delta>0 ? '#22c55e' : '#ef4444';
+    ovrIndicator = ` <span style="font-size:14px;color:${colour}">${sign}${mgrStatus.delta}</span>`;
+  }
+
   document.getElementById('teamSummary').innerHTML=`
-    <div class="summary-card"><div class="summary-val">${avgOvr}</div><div class="summary-label">Avg OVR</div></div>
+    <div class="summary-card"><div class="summary-val">${avgOvr}${ovrIndicator}</div><div class="summary-label">Avg OVR</div></div>
     <div class="summary-card"><div class="summary-val">${chosenFormation}</div><div class="summary-label">Formation</div></div>
     <div class="summary-card"><div class="summary-val">${formatBudget(spent)}</div><div class="summary-label">Spent</div></div>
     <div class="summary-card"><div class="summary-val">${chosenBuildup.charAt(0).toUpperCase()+chosenBuildup.slice(1)}</div><div class="summary-label">Style</div></div>`;
@@ -2224,7 +2342,7 @@ function showDrawScreen(label, showKickoff){
 function proceedFromDraw(){
   document.getElementById('drawScreen').classList.remove('visible');
   setTimeout(()=>{
-    if(playerFixture) showPreMatch(playerFixture);
+    if(playerFixture) showSquadReport();
   }, 30);
 }
 
@@ -2539,8 +2657,136 @@ function watchRemainingRounds(){
 }
 
 function hideAllScreens(){
-  ['finalScreen','matchScreen','gameoverScreen','prematchScreen','drawScreen','resultsScreen','managerScreen','newspaperScreen']
+  ['finalScreen','matchScreen','gameoverScreen','prematchScreen','drawScreen','resultsScreen','managerScreen','newspaperScreen','squadReportScreen']
     .forEach(id=>document.getElementById(id).classList.remove('visible'));
+}
+
+function showSquadReport(){
+  hideAllScreens();
+  const roundLabel = ROUND_LABELS[tournamentRound-1] || `Round ${tournamentRound}`;
+  document.getElementById('squadReportEyebrow').textContent = roundLabel;
+  document.getElementById('squadReportTeamName').innerHTML = `${teamName} <span>Squad Report</span>`;
+
+  // Manager card
+  if(chosenManager){
+    document.getElementById('squadReportManagerName').textContent = chosenManager.name;
+    document.getElementById('squadReportManagerDesc').textContent = chosenManager.desc;
+  } else {
+    document.getElementById('squadReportManagerName').textContent = 'No Manager';
+    document.getElementById('squadReportManagerDesc').textContent = 'No effect.';
+  }
+  const sqMgrStatus = getManagerStatus();
+  const sqStatusEl = document.getElementById('squadReportManagerStatus');
+  if(sqMgrStatus){
+    sqStatusEl.className = 'manager-status ' + (sqMgrStatus.active ? 'is-active' : 'is-inactive');
+    sqStatusEl.innerHTML = `<span class="manager-status-dot"></span>${sqMgrStatus.active ? 'Active' : 'Inactive'}`;
+  } else {
+    sqStatusEl.className = 'manager-status is-inactive';
+    sqStatusEl.innerHTML = `<span class="manager-status-dot"></span>Inactive`;
+  }
+
+  // Stats strip
+  const avgOvr = Math.round(squadSlots.reduce((a,s)=>a+(s.player.OVR||0),0)/squadSlots.length);
+  let sqOvrIndicator = '';
+  if(sqMgrStatus && sqMgrStatus.active && sqMgrStatus.delta!==0){
+    const sign = sqMgrStatus.delta>0 ? '+' : '';
+    const colour = sqMgrStatus.delta>0 ? '#22c55e' : '#ef4444';
+    sqOvrIndicator = ` <span style="font-size:13px;color:${colour}">${sign}${sqMgrStatus.delta}</span>`;
+  }
+  document.getElementById('squadReportOvr').innerHTML = avgOvr + sqOvrIndicator;
+  document.getElementById('squadReportFormation').textContent = chosenFormation;
+  const styleLabel = {short:'Short',direct:'Direct',hybrid:'Hybrid'}[chosenBuildup] || chosenBuildup;
+  document.getElementById('squadReportStyleDisplay').textContent = styleLabel;
+
+  // Pitch — reuse the same vertical layout as the final squad screen
+  const pitch = document.getElementById('squadReportPitch');
+  pitch.innerHTML = `<svg viewBox="0 0 160 90" xmlns="http://www.w3.org/2000/svg" style="position:absolute;inset:0;width:100%;height:100%">
+    <rect x="0" y="0" width="160" height="90" fill="#2d7a3a"/>
+    <rect x="0"   y="0" width="20" height="90" fill="#278534"/>
+    <rect x="40"  y="0" width="20" height="90" fill="#278534"/>
+    <rect x="80"  y="0" width="20" height="90" fill="#278534"/>
+    <rect x="120" y="0" width="20" height="90" fill="#278534"/>
+    <line x1="80" y1="5" x2="80" y2="85" stroke="rgba(255,255,255,0.75)" stroke-width="0.6"/>
+    <circle cx="80" cy="45" r="12" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="0.6"/>
+    <circle cx="80" cy="45" r="0.8" fill="rgba(255,255,255,0.75)"/>
+    <rect x="1"   y="20" width="18" height="50" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="0.6"/>
+    <rect x="1"   y="30" width="9"  height="30" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="0.6"/>
+    <rect x="141" y="20" width="18" height="50" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="0.6"/>
+    <rect x="150" y="30" width="9"  height="30" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="0.6"/>
+    <rect x="2"   y="2"  width="156" height="86" fill="none" stroke="rgba(255,255,255,0.75)" stroke-width="0.8"/>
+  </svg>`;
+  const nDef = squadSlots.filter(s=>s.pos==='DEF').length;
+  const nMid = squadSlots.filter(s=>s.pos==='MID').length;
+  const nAtt = squadSlots.filter(s=>s.pos==='ATT').length;
+  const hLayouts = {
+    '2-3-1': [
+      {pos:'GK', left:'10%', top:'50%'},
+      {pos:'DEF',left:'28%', top:'25%'},{pos:'DEF',left:'28%', top:'75%'},
+      {pos:'MID',left:'47%', top:'20%'},{pos:'MID',left:'47%', top:'50%'},{pos:'MID',left:'47%', top:'80%'},
+      {pos:'ATT',left:'68%', top:'50%'},
+    ],
+    '3-2-1': [
+      {pos:'GK', left:'10%', top:'50%'},
+      {pos:'DEF',left:'28%', top:'20%'},{pos:'DEF',left:'28%', top:'50%'},{pos:'DEF',left:'28%', top:'80%'},
+      {pos:'MID',left:'47%', top:'33%'},{pos:'MID',left:'47%', top:'67%'},
+      {pos:'ATT',left:'68%', top:'50%'},
+    ],
+    '2-2-2': [
+      {pos:'GK', left:'10%', top:'50%'},
+      {pos:'DEF',left:'28%', top:'30%'},{pos:'DEF',left:'28%', top:'70%'},
+      {pos:'MID',left:'47%', top:'30%'},{pos:'MID',left:'47%', top:'70%'},
+      {pos:'ATT',left:'68%', top:'30%'},{pos:'ATT',left:'68%', top:'70%'},
+    ],
+    '3-1-2': [
+      {pos:'GK', left:'10%', top:'50%'},
+      {pos:'DEF',left:'28%', top:'20%'},{pos:'DEF',left:'28%', top:'50%'},{pos:'DEF',left:'28%', top:'80%'},
+      {pos:'MID',left:'47%', top:'50%'},
+      {pos:'ATT',left:'68%', top:'30%'},{pos:'ATT',left:'68%', top:'70%'},
+    ],
+  };
+  const hLayout = hLayouts[`${nDef}-${nMid}-${nAtt}`] || hLayouts['2-2-2'];
+  hLayout.forEach((slot,i)=>{
+    const s = squadSlots[i];
+    if(!s) return;
+    const surname = displaySurname(s.player.Player);
+    const el = document.createElement('div');
+    el.className = 'pm-slot';
+    el.style.cssText = `position:absolute;left:${slot.left};top:${slot.top};transform:translate(-50%,-50%);text-align:center;z-index:2;`;
+    const shirtHex = s.pos==='GK' ? gkKitColour(chosenColour.hex) : chosenColour.hex;
+    const shirtStyle = s.pos==='GK' ? 'plain' : chosenStyle.id;
+    el.innerHTML = shirtSVG(shirtHex,shirtStyle,40,40,shirtStyle==='plain'?null:chosenSecondary?.hex) + `<div style="font-size:11px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.8);margin-top:2px;font-family:'Oswald',sans-serif;text-transform:uppercase;max-width:68px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${surname}</div>`;
+    pitch.appendChild(el);
+  });
+
+  document.getElementById('squadReportScreen').classList.add('visible');
+}
+
+function proceedFromSquadReport(){
+  document.getElementById('squadReportScreen').classList.remove('visible');
+  setTimeout(()=>{
+    if(playerFixture) showPreMatch(playerFixture);
+  }, 30);
+}
+
+function openStyleChangeFromReport(){
+  document.getElementById('squadReportScreen').classList.remove('visible');
+  document.getElementById('buildupEyebrow').textContent = 'Change Tactics';
+  document.getElementById('buildupScreen').classList.add('visible');
+  _returningToSquadReport = true;
+}
+
+function simulateInstant(){
+  document.getElementById('prematchScreen').classList.remove('visible');
+  const home = buildTeam(teamName, squadSlots, true);
+  const away = buildTournamentTeam(playerFixture);
+  const result = simulateMatch(home, away, chosenBuildup, playerFixture.buildupStyle);
+  const playerWon = result.winner === teamName;
+  if(playerWon){
+    showResultsScreen(result, true);
+  } else {
+    playerEliminated = true;
+    showNewspaper(result);
+  }
 }
 
 function showPreMatch(fixture){
@@ -3325,7 +3571,7 @@ function restartGame(){
   const fb=document.getElementById('formationBtn'); if(fb) fb.disabled=true;
   document.getElementById('stylePreview').innerHTML='';
   document.getElementById('welcomeBtn').disabled=true;
-  ['formationScreen','buildupScreen','finalScreen','prematchScreen','gameoverScreen','matchScreen','drawScreen','resultsScreen','difficultyScreen','managerScreen','newspaperScreen']
+  ['formationScreen','buildupScreen','finalScreen','prematchScreen','gameoverScreen','matchScreen','drawScreen','resultsScreen','difficultyScreen','managerScreen','newspaperScreen','squadReportScreen']
     .forEach(id=>document.getElementById(id).classList.remove('visible'));
   document.getElementById('formationScreen').style.display='';
   document.getElementById('draftArea').style.display='none';
